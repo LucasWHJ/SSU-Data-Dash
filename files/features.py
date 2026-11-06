@@ -37,15 +37,19 @@ def square_feet(house_area, adj=None):
     return (low + high) / 2
 
 
+def base_features(homes):
+    pass
+
+
 def off_market_features(homes):
     """Features for homes with no list price."""
     X = pd.DataFrame(index=homes.index)
     X["square_feet"] = square_feet(homes["house_area"])
     X["lot_size"] = homes['lot_front'] * homes['lot_depth']
-    X["bedrooms"] = homes["bedrooms"]
-    X["washrooms"] = homes["washrooms"]
-    X["parking"] = homes["parking_total"]
-    X["garage"] = homes["garage"].astype(int)
+    # X["bedrooms"] = homes["bedrooms"]
+    # X["washrooms"] = homes["washrooms"]
+    # X["parking"] = homes["parking_total"]
+    # X["garage"] = homes["garage"].astype(int)
     X["num_amenities"] = homes[["bedrooms", "washrooms", "parking_total", "garage"]].sum(axis=1)
     X["latitude"] = homes["latitude"]
     X["longitude"] = homes["longitude"]
@@ -59,7 +63,6 @@ def off_market_features(homes):
     for word in REMARK_KEYWORDS:
         X["has_" + word] = homes["remarks"].str.contains(word).astype(int)
     X["remarks_word_count"] = homes['remarks'].str.split().str.len()
-    X["sold_price"] = homes["sold_price"]
     return X
 
 
