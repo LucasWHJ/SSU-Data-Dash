@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import time
 
 import numpy as np
@@ -23,6 +24,7 @@ OUT = Path("outputs/remarks_comparison")
 CACHE = OUT / "cache"
 DIMENSIONS = 32
 LLM_COLUMNS = ["condition"]
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
 def text_hash(text):
@@ -36,20 +38,39 @@ def texts(homes):
 def read_cache(homes, method):
     """Verify exact text matches; never silently use stale or missing features."""
     if method == "embeddings":
+        if (CACHE / "embedding_building.json").exists():
+            raise ValueError("Embedding cache build is incomplete; finish prepare_remarks first")
+        metadata = json.loads((CACHE / "embedding_metadata.json").read_text())
+        if metadata.get("model") != EMBEDDING_MODEL or not metadata.get("revision"):
+            raise ValueError("Embedding cache encoder identity is missing or unexpected")
         index = pd.read_parquet(CACHE / "embedding_index.parquet").set_index("ml_num")
         values = np.load(CACHE / "embeddings.npy", mmap_mode="r")
+        if values.ndim != 2 or len(values) != len(index) or metadata.get("rows") != len(index):
+            raise ValueError("Embedding cache shape/index metadata mismatch")
+        pinned = CACHE.parent / "models" / (EMBEDDING_MODEL.rsplit("/", 1)[-1] + "_revision.json")
+        if pinned.exists() and metadata["revision"] != json.loads(pinned.read_text())["revision"]:
+            raise ValueError("Embedding cache revision differs from the pinned encoder")
+        positions = pd.to_numeric(index["position"], errors="coerce").to_numpy()
+        if (not np.isfinite(positions).all() or not np.equal(positions, np.floor(positions)).all()
+                or (positions < 0).any() or (positions >= len(values)).any()
+                or len(np.unique(positions)) != len(index)):
+            raise ValueError("Invalid embedding cache row positions")
     else:
         index = pd.read_parquet(CACHE / "llm.parquet").set_index("ml_num")
         values = index[LLM_COLUMNS].replace(0, np.nan).to_numpy(dtype=np.float32)
         index["position"] = np.arange(len(index))
-    assert index.index.is_unique, "Duplicate IDs in text cache"
+    if not index.index.is_unique:
+        raise ValueError("Duplicate IDs in text cache")
     selected = index.reindex(homes["ml_num"])
     if selected["text_hash"].isna().any():
         raise ValueError("Text cache is incomplete; finish prepare_remarks first")
     expected = texts(homes).map(text_hash).to_numpy()
     if not np.array_equal(selected["text_hash"].to_numpy(), expected):
         raise ValueError("Cached features do not match the current remarks")
-    return np.asarray(values[selected["position"].to_numpy(dtype=int)])
+    result = np.asarray(values[selected["position"].to_numpy(dtype=int)])
+    if method == "embeddings" and (not np.isfinite(result).all() or (np.linalg.norm(result, axis=1) == 0).any()):
+        raise ValueError("Embedding cache contains nonfinite or unwritten zero vectors")
+    return result
 
 
 def fit_text_features(method, train, homes, cached=None):
@@ -76,6 +97,22 @@ def fit_text_features(method, train, homes, cached=None):
 def score(rows):
     error = 100 * (rows["predicted_price"] - rows["sold_price"]).abs() / rows["sold_price"]
     return {"mdape": float(error.median()), "mape": float(error.mean())}
+
+
+def initialize_baseline():
+    """Create the otherwise ignored baseline artifacts from a fresh validation."""
+    from run import ROOT, validate
+    OUT.mkdir(parents=True, exist_ok=True)
+    manifest = OUT / "baseline_manifest.json"
+    if manifest.exists() or any(OUT.glob("*_scores.json")):
+        raise FileExistsError("A comparison already exists; preserve its baseline rather than overwriting it")
+    validate()
+    baseline = OUT / "baseline_predictions.csv"
+    shutil.copyfile(ROOT / "outputs/validation_predictions.csv", baseline)
+    paths = [Path("files/features.py"), Path("files/models.py"), data.find_file("listings"), baseline]
+    manifest.write_text(json.dumps({"sha256": {
+        str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}}, indent=2))
+    print("Fresh baseline predictions and manifest saved", flush=True)
 
 
 def compare(method):
@@ -140,5 +177,9 @@ def compare(method):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("method", choices=["tfidf", "tfidf_direct", "embeddings", "llm"])
-    compare(parser.parse_args().method)
+    parser.add_argument("method", choices=["init", "tfidf", "tfidf_direct", "embeddings", "llm"])
+    method = parser.parse_args().method
+    if method == "init":
+        initialize_baseline()
+    else:
+        compare(method)

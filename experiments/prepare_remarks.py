@@ -15,9 +15,8 @@ import numpy as np
 import pandas as pd
 
 from files import data
-from experiments.compare_remarks import CACHE, OUT, LLM_COLUMNS, text_hash, texts
+from experiments.compare_remarks import CACHE, OUT, LLM_COLUMNS, EMBEDDING_MODEL, text_hash, texts
 
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 LLM_MODEL = "mlx-community/Qwen2.5-1.5B-Instruct-4bit"
 PROMPT = """Extract the home's current physical condition. Reply with one digit only:
 0=unclear, 1=original/dated/needs repairs/as-is, 2=partly updated,
@@ -55,18 +54,32 @@ def embeddings(homes):
     statements = texts(homes).tolist()
     destination = CACHE / "embeddings.npy"
     metadata = CACHE / "embedding_index.parquet"
-    values = np.lib.format.open_memmap(destination, mode="w+", dtype="float32",
+    marker = CACHE / "embedding_building.json"
+    marker.write_text(json.dumps({"model": EMBEDDING_MODEL, "revision": revision, "rows": len(homes)}))
+    pending = CACHE / "embeddings.pending.npy"
+    values = np.lib.format.open_memmap(pending, mode="w+", dtype="float32",
                                       shape=(len(homes), model.get_sentence_embedding_dimension()))
     for start in range(0, len(homes), 1024):
         batch = statements[start:start + 1024]
-        values[start:start + len(batch)] = model.encode(batch, batch_size=64,
+        encoded = model.encode(batch, batch_size=64,
             normalize_embeddings=True, show_progress_bar=False)
+        if not np.isfinite(encoded).all() or (np.linalg.norm(encoded, axis=1) == 0).any():
+            raise ValueError("Encoder produced invalid vectors; incomplete cache not published")
+        values[start:start + len(batch)] = encoded
         values.flush()
         print("embeddings", start + len(batch), "/", len(homes), device, flush=True)
+    values.flush()
+    del values
+    pending_index = CACHE / "embedding_index.pending.parquet"
     pd.DataFrame({"ml_num": homes["ml_num"], "position": np.arange(len(homes)),
-                  "text_hash": texts(homes).map(text_hash)}).to_parquet(metadata, index=False)
-    (CACHE / "embedding_metadata.json").write_text(json.dumps({"model": EMBEDDING_MODEL,
+                  "text_hash": texts(homes).map(text_hash)}).to_parquet(pending_index, index=False)
+    pending_metadata = CACHE / "embedding_metadata.pending.json"
+    pending_metadata.write_text(json.dumps({"model": EMBEDDING_MODEL,
         "revision": revision, "device": device, "rows": len(homes)}, indent=2))
+    pending.replace(destination)
+    pending_index.replace(metadata)
+    pending_metadata.replace(CACHE / "embedding_metadata.json")
+    marker.unlink()
 
 
 def parse_output(output):
