@@ -212,8 +212,11 @@ communities with at least 100 validation homes (10.87\%), although its 184 homes
 
 \section{Limitations}
 \textbf{Selection uncertainty.} Repeated selection can overfit these six months, and the 0.11- and
-0.01-point keyword gains are within bootstrap uncertainty. Hidden-test accuracy is unknown. We would confirm choices
-on reserved future months.
+0.01-point keyword gains are within bootstrap uncertainty. With off-market feature sampling
+(\texttt{max\_features=0.7}), reordering columns can change the randomly selected candidate
+features even with a fixed seed. Our bootstrap intervals do not capture variation from column
+order or random seed. Hidden-test accuracy is unknown. We would confirm choices on reserved
+future months.
 
 \textbf{Test-description screening.} Keyword selection used unlabelled descriptions from both
 test files, although their sale prices remained hidden.
