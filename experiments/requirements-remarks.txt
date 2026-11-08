@@ -1,0 +1,13 @@
+# Install in a separate Python 3.11 environment for text experiments.
+# This intentionally does not replace the project's main requirements.txt.
+numpy==2.2.6
+pandas==2.3.3
+pyarrow==22.0.0
+scikit-learn==1.7.2
+matplotlib==3.10.9
+sentence-transformers==5.1.2
+torch==2.8.0
+transformers==4.57.1
+huggingface_hub==0.36.0
+mlx-lm==0.28.3; sys_platform == "darwin" and platform_machine == "arm64"
+mlx==0.32.4; sys_platform == "darwin" and platform_machine == "arm64"

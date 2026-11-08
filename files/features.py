@@ -13,10 +13,7 @@ CATEGORICAL_COLUMNS = ("house_type_name", "house_style", "municipality", "commun
 REMARK_PATTERNS = {
     "renovated": r"renovat|updated|modern|upgrad|remodel",
     "needs_work": r"needs work|fixer|as.is|tlc|original condition",
-    "luxury": r"luxur|premium|high.end|custom built",
-    "waterfront": r"waterfront|lake view|water view",
     "transit": r"subway|transit|t.tc|go station",
-    "new_build": r"new build|newly built|brand new",
 }
 
 
@@ -28,8 +25,8 @@ def square_feet(house_area):
     return (low + high) / 2
 
 
-def off_market_features(homes):
-    """Make only features known at listing time, without asking price."""
+def _base_features(homes):
+    """Make the listing-time features shared by both tracks."""
     x = pd.DataFrame(index=homes.index)
     x["square_feet"] = square_feet(homes["house_area"])
     for source, name in (("bedrooms", "bedrooms"), ("washrooms", "washrooms"),
@@ -50,9 +47,80 @@ def off_market_features(homes):
     return x
 
 
+def off_market_features(homes):
+    """Use Farhan's location projections and off-market feature selection."""
+    x = _add_common_remark_details(_base_features(homes), homes)
+    location_columns = []
+    # Oblique projections let axis-aligned trees split locations in more directions.
+    # The longitude scale is fixed; no statistics are learned from prediction homes.
+    for degrees in (15, 30, 45, 60, 75, 105, 120, 135, 150, 165):
+        radians = np.deg2rad(degrees)
+        column = f"location_projection_{degrees}"
+        x[column] = (np.cos(radians) * x["latitude"]
+                     + np.sin(radians) * 0.72 * x["longitude"])
+        location_columns.append(column)
+
+    listed = pd.to_datetime(homes["date_listed"])
+    x["listing_month"] = listed.dt.month
+    x["listing_quarter"] = listed.dt.quarter
+    square_feet_safe = x["square_feet"].replace(0, np.nan)
+    x["lot_to_house_area"] = x["lot_area"] / square_feet_safe
+    x["bedrooms_per_sqft"] = x["bedrooms"] / square_feet_safe
+    x["washrooms_per_sqft"] = x["washrooms"] / square_feet_safe
+    x["washrooms_per_bedroom"] = x["washrooms"] / x["bedrooms"].replace(0, np.nan)
+    x["garage_share_of_parking"] = x["garage"] / x["parking"].replace(0, np.nan)
+
+    # Keep the notebook's feature order: it also determines seeded feature sampling.
+    remark_columns = ["remark_words"] + ["remark_" + name for name in (
+        "renovated", "needs_work", "transit", "basement", "ravine", "view",
+        "balcony", "locker", "move_in")]
+    columns = (
+        ["house_type_name", "municipality", "house_style", "community"]
+        + location_columns + remark_columns
+        + ["bedrooms", "washrooms", "parking", "garage", "listing_month",
+           "listing_quarter", "lot_front", "lot_depth", "square_feet", "lot_area",
+           "months_since_2021", "lot_to_house_area", "bedrooms_per_sqft",
+           "washrooms_per_sqft", "washrooms_per_bedroom", "garage_share_of_parking"]
+    )
+    return _add_condition_remark_details(x[columns].copy(), homes)
+
+
+def _add_common_remark_details(x, homes):
+    """Add description signals frequent enough to use in both tracks."""
+    remarks = homes["remarks"].fillna("").astype(str).str.lower()
+    x["remark_words"] = remarks.str.count(r"\b\w+\b")
+    patterns = {
+        "basement": r"basement|lower level",
+        "ravine": r"ravine",
+        "view": r"unobstructed|panoramic|city view",
+        "balcony": r"balcony|terrace",
+        "locker": r"locker|storage unit",
+        "move_in": r"move.in ready|turnkey",
+    }
+    for name, pattern in patterns.items():
+        x["remark_" + name] = remarks.str.contains(pattern, regex=True).astype(int)
+    return x
+
+
+def _add_condition_remark_details(x, homes):
+    """Append the two condition flags selected by both-track validation.
+
+    Original finishes need not imply disrepair. Keep this separate from the
+    existing needs-work indicator, and keep full renovation separate from updates.
+    """
+    remarks = homes["remarks"].fillna("").astype(str).str.lower()
+    patterns = {
+        "original": r"\boriginal\b",
+        "fully_redone": r"fully redone|top to bottom|completely renovat|fully renovat|\bgutted\b",
+    }
+    for name, pattern in patterns.items():
+        x["remark_extra_" + name] = remarks.str.contains(pattern, regex=True).astype(int)
+    return x
+
+
 def list_aware_features(homes):
     """Add asking-price information available only in the list-aware track."""
-    x = off_market_features(homes)
+    x = _base_features(homes)
     x["list_price"] = pd.to_numeric(homes["list_price"], errors="coerce")
     x["list_price_per_sqft"] = x["list_price"] / x["square_feet"].replace(0, np.nan)
-    return x
+    return _add_condition_remark_details(_add_common_remark_details(x, homes), homes)
