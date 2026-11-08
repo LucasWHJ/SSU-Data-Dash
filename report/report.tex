@@ -9,12 +9,12 @@
   pdftitle={SSU Data Dash 2026: Analysts},
   pdfauthor={Farhan Zahid, Haojie Wang, Jiaming Han, Luke Zhenyang He}}
 \graphicspath{{../figures/}}
-\setlength{\parskip}{3pt}
+\setlength{\parskip}{2pt}
 \setlength{\parindent}{0pt}
 \setlength{\emergencystretch}{2em}
-\setlength{\textfloatsep}{12pt}
-\setlength{\intextsep}{10pt}
-\setlength{\abovecaptionskip}{6pt}
+\setlength{\textfloatsep}{8pt}
+\setlength{\intextsep}{6pt}
+\setlength{\abovecaptionskip}{4pt}
 % Keep the template's 11pt text and section style, with less heading whitespace.
 \makeatletter
 \renewcommand\section{\@startsection{section}{1}{\z@}
@@ -134,7 +134,7 @@ full-renovation indicators lowered off-market MdAPE by 0.11 percentage points an
 only 0.01, but paired bootstrap intervals for both changes included zero. We retained all eleven
 for their lower observed errors, while treating the gain as uncertain.
 
-\begin{table}[ht]
+\begin{table}[H]
 \centering
 \small
 \begin{tabular}{p{8.0cm}rr}
@@ -142,10 +142,10 @@ for their lower observed errors, while treating the gain as uncertain.
 Description features & Off-market MdAPE & List-aware MdAPE \\
 \midrule
 Nine keyword groups and word count & 7.87\% & 4.11\% \\
-Same features plus original finishes and full renovation (selected) & 7.76\% & 4.10\% \\
+Eleven keyword groups and word count (selected) & 7.76\% & 4.10\% \\
 \bottomrule
 \end{tabular}
-\caption{Two separate 0/1 description indicators were added while all other inputs and settings were fixed.}
+\caption{Keyword comparison with other features and model settings held fixed.}
 \end{table}
 
 \begin{samepage}
@@ -154,10 +154,19 @@ improved earlier-model MdAPE. Qwen condition extraction was evaluated only on a 
 \par
 \end{samepage}
 
+\begin{samepage}
+An off-market notebook trial added 1-, 30- and 90-day mean log sale prices by property type,
+municipality and style, using sales before listing and no later than the training cutoff.
+MdAPE/MAPE were 8.19\%/10.70\% versus 7.86\%/10.49\% for its earlier configuration, so these
+features were excluded. A sale-date-based variant was diagnostic only because sale dates are
+unknown at prediction.
+\par
+\end{samepage}
+
 \section{Where the model fails}
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.78\linewidth]{error_by_price_range.png}
+\includegraphics[width=0.72\linewidth]{error_by_price_range.png}
 \caption{Absolute percentage error grouped by actual sale price. Lines show medians and bands show
 the 25th--75th percentiles. The predicted-price check below also found larger high-end errors.}
 \end{figure}
@@ -225,8 +234,8 @@ enter the same extreme bin, so this feature cannot continue a rising or falling 
 same December--May homes. MdAPE rose from 7.76\% to 8.39\% off-market and from 4.10\% to 4.31\%
 list-aware. This combines a longer horizon with less recent training data, so it is a stress test
 rather than a forecast of hidden-test error. Removing the linear trend in the same frozen setup
-raised errors to 14.40\% and 7.10\%. We have not tested an extrapolating time model or recent-price
-features. The smaller list-aware increase is consistent with some benefit from the asking-price
+raised errors to 14.40\% and 7.10\%. We have not tested an extrapolating time model.
+The smaller list-aware increase is consistent with some benefit from the asking-price
 anchor, although both tracks worsened substantially when the trend was removed.
 
 \textbf{Data and drift.} Our data are synthetic, area midpoints lose information, and descriptions
