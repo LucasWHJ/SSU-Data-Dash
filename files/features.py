@@ -48,21 +48,41 @@ def _base_features(homes):
 
 
 def off_market_features(homes):
-    """Add listing-time details useful when asking price is unavailable."""
-    x = _base_features(homes)
-    area_parts = homes["house_area"].astype(str).str.split("-", n=1, expand=True).reindex(columns=[0, 1])
-    area_low = pd.to_numeric(area_parts[0], errors="coerce")
-    area_high = pd.to_numeric(area_parts[1], errors="coerce").fillna(area_low)
-    x["area_low"] = area_low
-    x["area_width"] = area_high - area_low
+    """Use Farhan's location projections and off-market feature selection."""
+    x = _add_common_remark_details(_base_features(homes), homes)
+    location_columns = []
+    # Oblique projections let axis-aligned trees split locations in more directions.
+    # The longitude scale is fixed; no statistics are learned from prediction homes.
+    for degrees in (15, 30, 45, 60, 75, 105, 120, 135, 150, 165):
+        radians = np.deg2rad(degrees)
+        column = f"location_projection_{degrees}"
+        x[column] = (np.cos(radians) * x["latitude"]
+                     + np.sin(radians) * 0.72 * x["longitude"])
+        location_columns.append(column)
+
+    listed = pd.to_datetime(homes["date_listed"])
+    x["listing_month"] = listed.dt.month
+    x["listing_quarter"] = listed.dt.quarter
     square_feet_safe = x["square_feet"].replace(0, np.nan)
     x["lot_to_house_area"] = x["lot_area"] / square_feet_safe
-    x["bedrooms_per_1000sqft"] = 1000 * x["bedrooms"] / square_feet_safe
-    x["washrooms_per_1000sqft"] = 1000 * x["washrooms"] / square_feet_safe
+    x["bedrooms_per_sqft"] = x["bedrooms"] / square_feet_safe
+    x["washrooms_per_sqft"] = x["washrooms"] / square_feet_safe
     x["washrooms_per_bedroom"] = x["washrooms"] / x["bedrooms"].replace(0, np.nan)
     x["garage_share_of_parking"] = x["garage"] / x["parking"].replace(0, np.nan)
 
-    return _add_common_remark_details(x, homes)
+    # Keep the notebook's feature order: it also determines seeded feature sampling.
+    remark_columns = ["remark_words"] + ["remark_" + name for name in (
+        "renovated", "needs_work", "transit", "basement", "ravine", "view",
+        "balcony", "locker", "move_in")]
+    columns = (
+        ["house_type_name", "municipality", "house_style", "community"]
+        + location_columns + remark_columns
+        + ["bedrooms", "washrooms", "parking", "garage", "listing_month",
+           "listing_quarter", "lot_front", "lot_depth", "square_feet", "lot_area",
+           "months_since_2021", "lot_to_house_area", "bedrooms_per_sqft",
+           "washrooms_per_sqft", "washrooms_per_bedroom", "garage_share_of_parking"]
+    )
+    return _add_condition_remark_details(x[columns].copy(), homes)
 
 
 def _add_common_remark_details(x, homes):
@@ -82,9 +102,25 @@ def _add_common_remark_details(x, homes):
     return x
 
 
+def _add_condition_remark_details(x, homes):
+    """Append the two condition flags selected by both-track validation.
+
+    Original finishes need not imply disrepair. Keep this separate from the
+    existing needs-work indicator, and keep full renovation separate from updates.
+    """
+    remarks = homes["remarks"].fillna("").astype(str).str.lower()
+    patterns = {
+        "original": r"\boriginal\b",
+        "fully_redone": r"fully redone|top to bottom|completely renovat|fully renovat|\bgutted\b",
+    }
+    for name, pattern in patterns.items():
+        x["remark_extra_" + name] = remarks.str.contains(pattern, regex=True).astype(int)
+    return x
+
+
 def list_aware_features(homes):
     """Add asking-price information available only in the list-aware track."""
     x = _base_features(homes)
     x["list_price"] = pd.to_numeric(homes["list_price"], errors="coerce")
     x["list_price_per_sqft"] = x["list_price"] / x["square_feet"].replace(0, np.nan)
-    return _add_common_remark_details(x, homes)
+    return _add_condition_remark_details(_add_common_remark_details(x, homes), homes)

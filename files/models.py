@@ -9,8 +9,9 @@ from . import features
 def make_model(track):
     """Return the active model for a competition track."""
     if track == "off_market":
-        return FeatureModel(features.off_market_features, learning_rate=0.05,
-                            max_iter=420, max_leaf_nodes=63, min_samples_leaf=30)
+        return FeatureModel(features.off_market_features, learning_rate=0.18,
+                            max_iter=400, max_leaf_nodes=60, min_samples_leaf=30,
+                            max_features=0.7)
     if track == "list_aware":
         return FeatureModel(features.list_aware_features, relative_to_list=True,
                             loss="absolute_error")
@@ -65,7 +66,7 @@ class FeatureModel:
 
     def __init__(self, make_features, relative_to_list=False, loss="squared_error",
                  learning_rate=0.06, max_iter=260, max_leaf_nodes=31,
-                 min_samples_leaf=40):
+                 min_samples_leaf=40, max_features=1.0):
         self.make_features = make_features
         self.relative_to_list = relative_to_list
         self.categories = {}
@@ -75,6 +76,7 @@ class FeatureModel:
             max_iter=max_iter,
             max_leaf_nodes=max_leaf_nodes,
             min_samples_leaf=min_samples_leaf,
+            max_features=max_features,
             l2_regularization=0.1,
             categorical_features="from_dtype",
             early_stopping=False,

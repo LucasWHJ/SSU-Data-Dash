@@ -1,78 +1,268 @@
-% SSU Data Dash 2026: team report template. Compile from this folder (Overleaf: upload the whole
-% repository as a zip). `python run.py report` writes the results table and figure it includes.
-% Keep the report to 4 pages, not counting the outside-data table and the appendix.
-\documentclass[11pt]{article}
+% Compile from report/ after running `python run.py report` at the repository root.
+% The whole report, including outside sources, is kept within four pages.
+\documentclass[11pt,a4paper]{article}
 \usepackage[margin=2.2cm]{geometry}
 \usepackage{graphicx,booktabs,hyperref}
+\usepackage{lmodern}
+\usepackage{float}
+\hypersetup{hidelinks,
+  pdftitle={SSU Data Dash 2026: Analysts},
+  pdfauthor={Farhan Zahid, Haojie Wang, Jiaming Han, Luke Zhenyang He}}
 \graphicspath{{../figures/}}
-\setlength{\parskip}{4pt}
+\setlength{\parskip}{3pt}
+\setlength{\parindent}{0pt}
+\setlength{\emergencystretch}{2em}
+\setlength{\textfloatsep}{12pt}
+\setlength{\intextsep}{10pt}
+\setlength{\abovecaptionskip}{6pt}
+% Keep the template's 11pt text and section style, with less heading whitespace.
+\makeatletter
+\renewcommand\section{\@startsection{section}{1}{\z@}
+  {-2.4ex \@plus -0.8ex \@minus -0.2ex}
+  {1.2ex \@plus 0.2ex}{\normalfont\Large\bfseries}}
+\makeatother
 
-% Required: your team name and the full name of every team member.
-\title{SSU Data Dash 2026: \textit{Team name}}
-\author{\textit{Full name of every team member: First Last, First Last, \ldots}}
+\title{SSU Data Dash 2026: Analysts}
+% Alphabetical by full English name.
+\author{Farhan Zahid \and Haojie Wang \and Jiaming Han \and Luke Zhenyang He}
 \date{}
 
 \begin{document}
 \maketitle
+\vspace{-1.7em}
 
-\noindent\begin{tabular}{@{}ll}
-\textbf{Video (YouTube, unlisted is fine):} & \url{https://youtu.be/YOUR-VIDEO} \\
-\textbf{Code and submission files (GitHub):} & \url{https://github.com/YOUR-TEAM/YOUR-REPO} \\
+\noindent\begin{tabular}{@{}lp{0.64\linewidth}@{}}
+% TODO: replace this placeholder with the team's YouTube URL before submission.
+\textbf{Video (YouTube):} & \textit{[To be added]} \\
+\textbf{Code and submission files:} & \url{https://github.com/LucasWHJ/SSU-Data-Dash} \\
 \end{tabular}
 
 \section*{Summary}
-% Three or four sentences: your approach, your validation result, and your main finding.
-\textit{What you did, how well it worked when tested on later sales, and the one thing you learned.}
+We built separate models to value homes without an asking price and predict listed homes' sale prices.
+Gradient-boosted trees achieved validation MdAPE of 7.76\% off-market and 4.10\% list-aware on
+10,069 homes per track. Asking price provided a useful anchor, while off-market MdAPE rose from
+6.5\% in the lowest predicted-price decile to 12.2\% in the highest.
+Validation scores may flatter test performance: selection was repeated on the same six months,
+and freezing training at August 2025 raised MdAPE to 8.39\% off-market and 4.31\% list-aware.
 
 \section{Data and features}
-% Which columns you used, what you built from them, and anything you dropped and why.
-\textit{Your features for each track.}
+We used the organisers' 150,000 synthetic sales from January 2021 to May 2026
+(\href{https://huggingface.co/datasets/Baliyang/SSU_data_dash}{competition dataset}).
+The hidden-test files contain 3,974 off-market and 4,064 list-aware homes. Sale price supplied the
+training target, and sale date defined historical splits. Neither entered the prediction features.
+We also excluded days on market and the external automated valuation model (AVM) estimate,
+which are absent from the test files.
+For final predictions, both models were refitted on all 150,000 known sales.
 
+Both tracks used house-area midpoints, bedrooms, bathrooms, parking, garage capacity, lot dimensions
+and area, property type, style, municipality and community. Trees handled missing numeric values,
+while categories were learned from each training fold and unseen levels were mapped to missing.
+All time features came from the listing date (\verb|date_listed|). These included months since
+January 2021 for trend, calendar month and quarter, and sine/cosine month encodings.
+
+We used descriptions to capture details missing from the structured columns. We first used SQL
+\texttt{ILIKE} queries on the \texttt{remarks} column across \verb|listings|,
+\verb|test_off_market| and \verb|test_list_aware| to count homes matching each candidate pattern.
+This frequency screening identified eleven candidate feature groups for validation: renovation,
+repair needs, move-in readiness, transit, ravine, views, basement, balcony/terrace, locker/storage
+unit, original finishes, and full renovation. We then encoded each group as a 0/1 indicator using
+case-insensitive regular expression matching in Python and included description word count as a
+numerical feature.
+
+The original-finish and full-renovation indicators matched the word \textit{original} and phrases
+such as \textit{fully redone} and \textit{top to bottom}, respectively. They appeared in 24.85\% and 13.61\%
+of the 139,931 sales before validation began. We kept \textit{original} separate from repair needs
+because original finishes could still be well maintained.
+
+A tree splits one coordinate at a time, so diagonal geographic patterns can require many splits.
+Off-market used ten fixed projections of latitude and scaled longitude at 15--165 degrees,
+excluding 90 degrees because that projection would reproduce scaled longitude.
+It also used area and room ratios. List-aware kept raw
+coordinates and sine/cosine month encoding, plus asking price and asking price per square foot.
+Since we selected each track's full configuration on validation, these results do not isolate
+the list-aware effects of rotation or seasonal encoding.
+
+\newpage
 \section{Models}
-% One paragraph per track. Off-market has no list price; list-aware does. Explain how your two
-% models differ and why.
-\textit{Your off-market model and your list-aware model.}
+\textbf{Off-market.} A \texttt{HistGradientBoostingRegressor} learned log sale price, and we
+exponentiated its predictions to obtain dollar estimates. Without a listing anchor, the model had to learn the price level.
+Squared error on log prices gave more weight to large proportional misses while reducing the
+dominance of expensive homes' dollar errors. Settings were learning rate 0.18, 400 iterations,
+60 maximum leaves, 30 minimum samples per leaf and 70\% feature sampling at each split.
+
+\textbf{List-aware.} A separate regressor learned $\log(\mathrm{sale}/\mathrm{list})$, then
+exponentiated its output and multiplied by asking price. Absolute error limited the influence of
+unusually large departures from this anchor and targeted the conditional median log ratio.
+Exponentiation preserves that median. Settings were learning rate 0.06,
+260 iterations, 31 leaves, 40 samples per leaf and all features at each split. Both tracks used L2
+regularisation 0.1, seed 0 and no early stopping. Since MdAPE summarises percentage errors across
+homes, we selected whole configurations through validation rather than assuming that either training
+loss optimised this metric.
 
 \section{Validation}
-% How you tested the models without using information from the future: which months you
-% trained on, which you predicted, and how you made sure nothing leaked.
-\textit{How you validated.}
+For each month from December 2025 through May 2026, we fitted a fresh model using only sales
+completed before that month, then predicted every home sold during it. Training grew from
+139,931 to 147,709 sales, while the six months contributed 10,069 distinct validation homes per track.
+Earlier validation months entered subsequent training sets, matching the starter's expanding-window
+procedure. Metrics pooled all six months.
+
+Prediction inputs excluded post-sale fields and off-market asking price. Features used each home's
+available attributes, with training-fold categorical schemas. No hidden-test prices or future price
+averages were used. Splits followed sale months, not each home's original listing date.
+
+For sale price $y$ and prediction $\hat y$, we computed signed error as $100(\hat y-y)/y$,
+from which we obtained MdAPE and MAPE by taking the median and mean absolute values.
+Positive median signed error indicates upward bias.
+Bootstrap 95\% intervals used 1,000 home resamples (seed 0), excluding model-selection uncertainty
+and dependence from shared monthly shocks.
 
 \section{Results}
-\begin{table}[h]
+\begin{table}[ht]
 \centering
-\input{../reports/results_table.tex}
+\resizebox{\linewidth}{!}{\input{../reports/results_table.tex}}
 \caption{Walk-forward validation on the listings. MdAPE: median absolute percentage error.
 MAPE: mean absolute percentage error. Brackets: bootstrap 95\% interval.}
 \end{table}
-% Describe the numbers in words. What improved over the baselines, and by how much?
-\textit{What the table shows.}
+
+Our MdAPE was lower by 13.04 percentage points off-market and 3.20 list-aware than the organisers'
+reported starter scores of 20.8\% (nearest sales) and 7.3\% (asking price). Small overall median
+signed errors, +0.35\% and +0.31\%, motivated a closer calibration check.
+
+After frequency screening, we compared the first nine groups in Section 1 against all eleven,
+keeping other features, model parameters and validation months fixed. Adding \textit{original} and
+full-renovation indicators lowered off-market MdAPE by 0.11 percentage points and list-aware by
+only 0.01, but paired bootstrap intervals for both changes included zero. We retained all eleven
+for their lower observed errors, while treating the gain as uncertain.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{p{8.0cm}rr}
+\toprule
+Description features & Off-market MdAPE & List-aware MdAPE \\
+\midrule
+Nine keyword groups and word count & 7.87\% & 4.11\% \\
+Same features plus original finishes and full renovation (selected) & 7.76\% & 4.10\% \\
+\bottomrule
+\end{tabular}
+\caption{Two separate 0/1 description indicators were added while all other inputs and settings were fixed.}
+\end{table}
+
+\begin{samepage}
+We expected sentence embeddings and TF-IDF weights to capture more than keywords did, but neither
+improved earlier-model MdAPE. Qwen condition extraction was evaluated only on a small sample.
+\par
+\end{samepage}
 
 \section{Where the model fails}
-\begin{figure}[h]
+\begin{figure}[H]
 \centering
-\includegraphics[width=0.85\linewidth]{error_by_price_range.png}
-\caption{Absolute percentage error by sold-price decile.}
+\includegraphics[width=0.78\linewidth]{error_by_price_range.png}
+\caption{Absolute percentage error grouped by actual sale price. Lines show medians and bands show
+the 25th--75th percentiles. The predicted-price check below also found larger high-end errors.}
 \end{figure}
-% Add your own breakdowns: by month, property type, neighbourhood, size.
-\textit{Where errors are largest, and why you think so.}
+
+\textbf{Price and calibration.} Grouping by actual sale price initially suggested that we were
+overvaluing cheaper homes and undervaluing expensive ones. We first read this as shrinkage toward
+typical prices, although grouping on the realised outcome can itself create that pattern.
+Regrouping by predicted price (Table 3) left median overestimation of 3.01\% at the low end and
+0.30\% at the high end. The high-end negative bias largely disappeared, while low-end overestimation
+remained. List-aware's corresponding errors were closer to zero.
+
+Typical errors were still larger for expensive homes. By predicted price, off-market MdAPE was 6.46\% in the lowest
+decile and 12.23\% in the highest, whereas list-aware values were 3.39\% and 4.76\%.
+The overall 90th-percentile absolute error was 21.68\% off-market and 11.05\% list-aware.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{llrr}
+\toprule
+Track & Deciles defined by & Lowest: signed error & Highest: signed error \\
+\midrule
+Off-market & Actual sale price & +7.24\% & $-$7.31\% \\
+Off-market & Predicted price & +3.01\% & +0.30\% \\
+List-aware & Actual sale price & +2.05\% & $-$1.47\% \\
+List-aware & Predicted price & +0.90\% & +0.22\% \\
+\bottomrule
+\end{tabular}
+\caption{Median signed errors. Membership changes when grouping by predicted rather than actual price.}
+\end{table}
+
+\textbf{Property type.} Off-market MdAPE was 6.65\% for condo apartments and 9.53\% for detached
+homes. Co-ops showed 12.19\% off-market versus 4.93\% list-aware, but only 48 were validated,
+so this contrast needs caution.
+
+\begin{samepage}
+\textbf{Time and neighbourhood.} Monthly MdAPE ranged from 7.46\% to 8.18\% off-market and
+3.81\% to 4.35\% list-aware, which peaked in May. Elmview had the highest off-market MdAPE among
+communities with at least 100 validation homes (10.87\%), although its 184 homes represented only
+1.8\% of the validation sample.
+\par
+\end{samepage}
 
 \section{Limitations}
-\textit{What your model cannot do, and what you would try next.}
+\textbf{Selection uncertainty.} Repeated selection can overfit these six months, and the 0.11- and
+0.01-point keyword gains are within bootstrap uncertainty. Hidden-test accuracy is unknown. We would confirm choices
+on reserved future months.
+
+\textbf{Test-description screening.} Keyword selection used unlabelled descriptions from both
+test files, although their sale prices remained hidden.
+
+\textbf{Prediction timing.} Of 10,069 validation homes, 6,465 (64.2\%) were listed before their
+validation month's first day, which was the training cutoff. Training could therefore use sales
+unavailable at listing, making these backtests potentially optimistic for listing-time valuation.
+Valuing at listing time would need a separate backtest with a cutoff for each listing.
+
+\textbf{Coverage and horizon.} The test period extends further past training than validation did.
+In validation, 60.7\% of listing dates fell inside each fold's observed date range. This is below
+64.2\% because the latest training listing preceded the month-start cutoff. The furthest date was
+32 days beyond the range. In the test files, 71.4\% of off-market and 72.4\% of list-aware dates
+exceeded the final training maximum, by up to 122 days. For the linear trend input, later values
+enter the same extreme bin, so this feature cannot continue a rising or falling market.
+
+\textbf{Horizon stress test.} We froze training at August 31, 2025 (133,779 sales) and evaluated the
+same December--May homes. MdAPE rose from 7.76\% to 8.39\% off-market and from 4.10\% to 4.31\%
+list-aware. This combines a longer horizon with less recent training data, so it is a stress test
+rather than a forecast of hidden-test error. Removing the linear trend in the same frozen setup
+raised errors to 14.40\% and 7.10\%. We have not tested an extrapolating time model or recent-price
+features. The smaller list-aware increase is consistent with some benefit from the asking-price
+anchor, although both tracks worsened substantially when the trend was removed.
+
+\textbf{Data and drift.} Our data are synthetic, area midpoints lose information, and descriptions
+may omit or overstate details, so real-world use would need separate validation. List-aware's
+highest monthly error came in May, but one month cannot establish drift.
+
+\textbf{Decision risk.} Off-market misses sometimes exceeded 20\%. We would check recent
+comparables and estimate prediction intervals for individual homes.
 
 \section*{Outside data}
-% Every outside source, or write "None". Data may only cover periods up to and including May 2026.
-\begin{tabular}{lll}
+Final predictions used only competition data. The exploratory models below used pre-June 2026
+revisions, although their pretraining periods were unverified.
+Their outputs did not enter final features or predictions, and no real listing or sales records were used.
+
+\begingroup
+\centering
+\small
+\begin{tabular}{p{3.0cm}p{7.3cm}p{3.3cm}}
 \toprule
 Source & URL & Periods covered \\
 \midrule
-\textit{None} & & \\
+MiniLM &
+\href{https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/tree/c9745ed1d9f207416be6d2e6f8de32d1f16199bf}{\nolinkurl{https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2}} &
+Revision before June 2026 \\
+Qwen2.5 1.5B &
+\href{https://huggingface.co/mlx-community/Qwen2.5-1.5B-Instruct-4bit/tree/8b403126fc14f14cfc99bb4cfa72ecbc129ea677}{\nolinkurl{https://huggingface.co/mlx-community/Qwen2.5-1.5B-Instruct-4bit}} &
+Revision before June 2026 \\
 \bottomrule
 \end{tabular}
+\par
+\endgroup
 
 \section*{Reproducing our results}
-% The exact commands that produce your two submission files from a fresh copy of your repository.
-\texttt{pip install -r requirements.txt}\\
-\texttt{python run.py validate \&\& python run.py report \&\& python run.py predict \&\& python run.py check}
-
+With Python 3.11, run from the repository root (set \verb|DATA_DIR| only for local data):
+\begin{verbatim}
+python -m pip install -r requirements.txt && python run.py validate
+python run.py report && python run.py predict && python run.py check
+\end{verbatim}
 \end{document}
