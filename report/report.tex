@@ -38,35 +38,35 @@
 \end{tabular}
 
 \section*{Summary}
-We built separate models to value homes without an asking price and predict listed homes' sale prices.
-Gradient-boosted trees achieved validation MdAPE of 7.76\% off-market and 4.10\% list-aware on
-10,069 homes per track. Asking price provided a useful anchor, while off-market MdAPE rose from
+We built separate models to value homes with and without a list price, and predicted their sale prices.
+Histogram-based gradient-boosted trees achieved validation MdAPE of 7.76\% off-market and 4.10\% list-aware on
+10,069 homes per track. We found that list price provided a useful anchor, while off-market MdAPE varied from
 6.5\% in the lowest predicted-price decile to 12.2\% in the highest.
-Validation scores may flatter test performance: selection was repeated on the same six months,
-and freezing training at August 2025 raised MdAPE to 8.39\% off-market and 4.31\% list-aware.
+Validation scores may still flatter test performance, as selection was repeated on the same six months,
+and freezing training data at August 2025 latest raised MdAPE to 8.39\% off-market and 4.31\% list-aware.
 
 \section{Data and features}
-We used the organisers' 150,000 synthetic sales from January 2021 to May 2026
+We used the organisers' 150,000 sales synthetic dataset, covering homes with sold dates from January 2021 to May 2026
 (\href{https://huggingface.co/datasets/Baliyang/SSU_data_dash}{competition dataset}).
-The hidden-test files contain 3,974 off-market and 4,064 list-aware homes. Sale price supplied the
-training target, and sale date defined historical splits. Neither entered the prediction features.
-We also excluded days on market and the external automated valuation model (AVM) estimate,
-which are absent from the test files.
+The hidden test files contained 3,974 off-market and 4,064 list-aware homes. Sold price supplied the
+training target, and sold date defined historical splits, neither entering the prediction features in our final model.
+We also excluded days on market and the external automated valuation model (AVM) estimate, as both were
+absent from the test files.
 For final predictions, both models were refitted on all 150,000 known sales.
 
-Both tracks used house-area midpoints, bedrooms, bathrooms, parking, garage capacity, lot dimensions
-and area, property type, style, municipality and community. Trees handled missing numeric values,
+Both tracks used features such house-area midpoints (in square feet), num bedrooms, num bathrooms, parking capacity, garage capacity, lot dimensions
+and lot area as numerical features, and house type, style, municipality and community as unchanged categorical features. Trees handled missing numerical values,
 while categories were learned from each training fold and unseen levels were mapped to missing.
 All time features came from the listing date (\verb|date_listed|). These included months since
-January 2021 for trend, calendar month and quarter, and sine/cosine month encodings.
+January 2021 as a linear progression, and either calendar month/quarter, or sin/cos month harmonics as wrap-around features.
 
 We used descriptions to capture details missing from the structured columns. We first used SQL
 \texttt{ILIKE} queries on the \texttt{remarks} column across \verb|listings|,
-\verb|test_off_market| and \verb|test_list_aware| to count homes matching each candidate pattern.
+\verb|test_off_market| and \verb|test_list_aware| to count the number of listings matching each candidate pattern.
 This frequency screening identified eleven candidate feature groups for validation: renovation,
 repair needs, move-in readiness, transit, ravine, views, basement, balcony/terrace, locker/storage
 unit, original finishes, and full renovation. We then encoded each group as a 0/1 indicator using
-case-insensitive regular expression matching in Python and included description word count as a
+case-insensitive regex matching in Python, and also included description word count as a
 numerical feature.
 
 The original-finish and full-renovation indicators matched the word \textit{original} and phrases
@@ -74,45 +74,45 @@ such as \textit{fully redone} and \textit{top to bottom}, respectively. They app
 of the 139,931 sales before validation began. We kept \textit{original} separate from repair needs
 because original finishes could still be well maintained.
 
-A tree splits one coordinate at a time, so diagonal geographic patterns can require many splits.
-Off-market used ten fixed projections of latitude and scaled longitude at 15--165 degrees,
+A tree splits one coordinate at a time, so uncovering diagonal geographic patterns can require many inefficient splits.
+Off-market used ten fixed rotations of latitude and scaled longitude at 15--165 degrees,
 excluding 90 degrees because that projection would reproduce scaled longitude.
-It also used area and room ratios. List-aware kept raw
-coordinates and sine/cosine month encoding, plus asking price and asking price per square foot.
+It also used area and room ratios alongside actual area size and room counts. List-aware kept raw
+coordinates and sin/cos month encoding, plus asking price and asking price per square foot.
 Since we selected each track's full configuration on validation, these results do not isolate
 the list-aware effects of rotation or seasonal encoding.
 
 \newpage
 \section{Models}
-\textbf{Off-market.} A \texttt{HistGradientBoostingRegressor} learned log sale price, and we
-exponentiated its predictions to obtain dollar estimates. Without a listing anchor, the model had to learn the price level.
+\textbf{Off-market.} A \texttt{HistGradientBoostingRegressor} learned log sold price, and we
+exponentiated its predictions (\verb|np.exp()|) to obtain dollar estimates. Without a list price anchor, the model had to learn the price level.
 Squared error on log prices gave more weight to large proportional misses while reducing the
 dominance of expensive homes' dollar errors. Settings were learning rate 0.18, 400 iterations,
 60 maximum leaves, 30 minimum samples per leaf and 70\% feature sampling at each split.
 
-\textbf{List-aware.} A separate regressor learned $\log(\mathrm{sale}/\mathrm{list})$, then
-exponentiated its output and multiplied by asking price. Absolute error limited the influence of
+\textbf{List-aware.} A separate \texttt{HistGradientBoostingRegressor} learned $\log(\mathrm{sold}/\mathrm{list})$, then
+exponentiated its output and re-multiplied by list price. Absolute error limited the influence of
 unusually large departures from this anchor and targeted the conditional median log ratio.
 Exponentiation preserves that median. Settings were learning rate 0.06,
 260 iterations, 31 leaves, 40 samples per leaf and all features at each split. Both tracks used L2
-regularisation 0.1, seed 0 and no early stopping. Since MdAPE summarises percentage errors across
+regularisation 0.1, seed 0, and no early stopping. Since MdAPE summarises percentage errors across
 homes, we selected whole configurations through validation rather than assuming that either training
 loss optimised this metric.
 
 \section{Validation}
 For each month from December 2025 through May 2026, we fitted a fresh model using only sales
-completed before that month, then predicted every home sold during it. Training grew from
-139,931 to 147,709 sales, while the six months contributed 10,069 distinct validation homes per track.
+completed before that month, then predicted every home sold during that month. Training grew from
+139,931 to 147,709 sales, while the six months contributed 10,069 distinct validation homes.
 Earlier validation months entered subsequent training sets, matching the starter's expanding-window
-procedure. Metrics pooled all six months.
+procedure, and metrics pooled all six months.
 
 Prediction inputs excluded post-sale fields and off-market asking price. Features used each home's
 available attributes, with training-fold categorical schemas. No hidden-test prices or future price
 averages were used. Splits followed sale months, not each home's original listing date.
 
-For sale price $y$ and prediction $\hat y$, we computed signed error as $100(\hat y-y)/y$,
+For sold price $y$ and prediction $\hat y$, we computed signed error as $100(\hat y-y)/y$,
 from which we obtained MdAPE and MAPE by taking the median and mean absolute values.
-Positive median signed error indicates upward bias.
+Positive median signed error indicates upward bias in house valuation.
 Bootstrap 95\% intervals used 1,000 home resamples (seed 0), excluding model-selection uncertainty
 and dependence from shared monthly shocks.
 
@@ -124,7 +124,7 @@ and dependence from shared monthly shocks.
 MAPE: mean absolute percentage error. Brackets: bootstrap 95\% interval.}
 \end{table}
 
-Our MdAPE was lower by 13.04 percentage points off-market and 3.20 list-aware than the organisers'
+Our MdAPE was lower by 13.04 percentage points off-market and 3.20 list-aware than the baseline
 reported starter scores of 20.8\% (nearest sales) and 7.3\% (asking price). Small overall median
 signed errors, +0.35\% and +0.31\%, motivated a closer calibration check.
 
@@ -155,11 +155,12 @@ improved earlier-model MdAPE. Qwen condition extraction was evaluated only on a 
 \end{samepage}
 
 \begin{samepage}
-An off-market notebook trial added 1-, 30- and 90-day mean log sale prices by property type,
-municipality and style, using sales before listing and no later than the training cutoff.
-MdAPE/MAPE were 8.19\%/10.70\% versus 7.86\%/10.49\% for its earlier configuration, so these
-features were excluded. A sale-date-based variant was diagnostic only because sale dates are
-unknown at prediction.
+An off-market notebook trial also added 1/30/90-day rolling means for log sale prices by house type,
+municipality and house style, using sales before listing and no later than the training cutoff.
+MdAPE/MAPE results were 8.03\%/10.67\% compared to 7.86\%/10.49\% for our earlier configuration, so these
+features were not included. A sale-date-based variant (using sales before a home's sold date instead of list date) was
+compared as well, with no improvements made to MdAPE or MAPE. This was done as a diagnostic only,
+because sale dates are meant to be unknown at prediction time.
 \par
 \end{samepage}
 
@@ -172,11 +173,11 @@ the 25th--75th percentiles. The predicted-price check below also found larger hi
 \end{figure}
 
 \textbf{Price and calibration.} Grouping by actual sale price initially suggested that we were
-overvaluing cheaper homes and undervaluing expensive ones. We first read this as shrinkage toward
+overvaluing cheaper homes and undervaluing expensive ones. We first interpreted this as shrinkage toward
 typical prices, although grouping on the realised outcome can itself create that pattern.
 Regrouping by predicted price (Table 3) left median overestimation of 3.01\% at the low end and
-0.30\% at the high end. The high-end negative bias largely disappeared, while low-end overestimation
-remained. List-aware's corresponding errors were closer to zero.
+0.30\% at the high end. The high end negative bias largely disappeared, while low end overestimation
+remained. The list-aware track's corresponding errors were closer to zero.
 
 Typical errors were still larger for expensive homes. By predicted price, off-market MdAPE was 6.46\% in the lowest
 decile and 12.23\% in the highest, whereas list-aware values were 3.39\% and 4.76\%.
@@ -213,10 +214,10 @@ communities with at least 100 validation homes (10.87\%), although its 184 homes
 \section{Limitations}
 \textbf{Selection uncertainty.} Repeated selection can overfit these six months, and the 0.11- and
 0.01-point keyword gains are within bootstrap uncertainty. With off-market feature sampling
-(\texttt{max\_features=0.7}), reordering columns can change the randomly selected candidate
-features even with a fixed seed. Our bootstrap intervals do not capture variation from column
-order or random seed. Hidden-test accuracy is unknown. We would confirm choices on reserved
-future months.
+(\texttt{max\_features = 0.7}), reordering columns can change the randomly selected candidate
+features even with a fixed random seed. Our bootstrap intervals do not capture variation from column
+order or random seed, being based off our predictions only. Hidden-test accuracy is also unknown, and we would
+confirm choices on reserved future months.
 
 \textbf{Test-description screening.} Keyword selection used unlabelled descriptions from both
 test files, although their sale prices remained hidden.
@@ -237,13 +238,13 @@ enter the same extreme bin, so this feature cannot continue a rising or falling 
 same December--May homes. MdAPE rose from 7.76\% to 8.39\% off-market and from 4.10\% to 4.31\%
 list-aware. This combines a longer horizon with less recent training data, so it is a stress test
 rather than a forecast of hidden-test error. Removing the linear trend in the same frozen setup
-raised errors to 14.40\% and 7.10\%. We have not tested an extrapolating time model.
+raised errors to 14.40\% and 7.10\%. We have not tested an extrapolating time-based model.
 The smaller list-aware increase is consistent with some benefit from the asking-price
 anchor, although both tracks worsened substantially when the trend was removed.
 
-\textbf{Data and drift.} Our data are synthetic, area midpoints lose information, and descriptions
+\textbf{Data and drift.} As the data is synthetic, area midpoints lose information, and descriptions
 may omit or overstate details, so real-world use would need separate validation. List-aware's
-highest monthly error came in May, but one month cannot establish drift.
+highest monthly error came in May, but a single month cannot establish drift.
 
 \textbf{Decision risk.} Off-market misses sometimes exceeded 20\%. We would check recent
 comparables and estimate prediction intervals for individual homes.
@@ -251,7 +252,7 @@ comparables and estimate prediction intervals for individual homes.
 \section*{Outside data}
 Final predictions used only competition data. The exploratory models below used pre-June 2026
 revisions, although their pretraining periods were unverified.
-Their outputs did not enter final features or predictions, and no real listing or sales records were used.
+Their outputs did not enter final features or predictions, and no real supplementary listing or sales records were used.
 
 \begingroup
 \centering
